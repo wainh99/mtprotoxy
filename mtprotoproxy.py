@@ -136,10 +136,10 @@ def init_config():
 
     # load advanced settings
 
-    # use middle proxy, necessary to show ad
+    # use middle relay, necessary to show ad
     conf_dict.setdefault("USE_MIDDLE_PROXY", len(conf_dict["AD_TAG"]) == 16)
 
-    # if IPv6 available, use it by default, IPv6 with middle proxies is unstable now
+    # if IPv6 available, use it by default, IPv6 with middle relays is unstable now
     conf_dict.setdefault("PREFER_IPV6", socket.has_ipv6 and not conf_dict["USE_MIDDLE_PROXY"])
 
     # disables tg->client traffic reencryption, faster but less secure
@@ -183,32 +183,32 @@ def init_config():
 
     conf_dict["MODES"] = modes
 
-    # accept incoming connections only with proxy protocol v1/v2, useful for nginx and haproxy
+    # accept incoming connections only with frontend protocol v1/v2, useful for nginx and haproxy
     conf_dict.setdefault("PROXY_PROTOCOL", False)
 
-    # set the tls domain for the proxy, has an influence only on starting message
+    # set the tls domain for the service, has an influence only on starting message
     conf_dict.setdefault("TLS_DOMAIN", "www.google.com")
 
-    # enable proxying bad clients to some host
+    # enable forwarding bad clients to some host
     conf_dict.setdefault("MASK", True)
 
     # the next host to forward bad clients
     conf_dict.setdefault("MASK_HOST", conf_dict["TLS_DOMAIN"])
 
-    # set the home domain for the proxy, has an influence only on the log message
+    # set the home domain for the service, has an influence only on the log message
     conf_dict.setdefault("MY_DOMAIN", False)
 
     # the next host's port to forward bad clients
     conf_dict.setdefault("MASK_PORT", 443)
 
-    # use upstream SOCKS5 proxy
+    # use upstream SOCKS5 relay
     conf_dict.setdefault("SOCKS5_HOST", None)
     conf_dict.setdefault("SOCKS5_PORT", None)
     conf_dict.setdefault("SOCKS5_USER", None)
     conf_dict.setdefault("SOCKS5_PASS", None)
 
     if conf_dict["SOCKS5_HOST"] and conf_dict["SOCKS5_PORT"]:
-        # Disable the middle proxy if using socks, they are not compatible
+        # Disable the middle relay if using socks, they are not compatible
         conf_dict["USE_MIDDLE_PROXY"] = False
 
     # user tcp connection limits, the mapping from name to the integer limit
@@ -236,7 +236,7 @@ def init_config():
     # delay in seconds between stats printing
     conf_dict.setdefault("STATS_PRINT_PERIOD", 600)
 
-    # delay in seconds between middle proxy info updates
+    # delay in seconds between middle relay info updates
     conf_dict.setdefault("PROXY_INFO_UPDATE_PERIOD", 24*60*60)
 
     # delay in seconds between time getting, zero means disabled
@@ -249,7 +249,7 @@ def init_config():
     # can be the tuple (low, users_margin, high) for the adaptive case. If no much users, use high
     conf_dict.setdefault("TO_CLT_BUFSIZE", (16384, 100, 131072))
 
-    # max socket buffer size to the telegram servers direction, also can be the tuple
+    # max socket buffer size to the upstream servers direction, also can be the tuple
     conf_dict.setdefault("TO_TG_BUFSIZE", 65536)
 
     # keepalive period for clients in secs
@@ -261,10 +261,10 @@ def init_config():
     # if client doesn't confirm data for this number of seconds, it is dropped
     conf_dict.setdefault("CLIENT_ACK_TIMEOUT", 5*60)
 
-    # telegram servers connect timeout in seconds
+    # upstream servers connect timeout in seconds
     conf_dict.setdefault("TG_CONNECT_TIMEOUT", 10)
 
-    # drop connection if no data from telegram server for this many seconds
+    # drop connection if no data from upstream server for this many seconds
     conf_dict.setdefault("TG_READ_TIMEOUT", 60)
 
     # listen address for IPv4
@@ -288,11 +288,11 @@ def init_config():
     # prometheus scrapers whitelist
     conf_dict.setdefault("METRICS_WHITELIST", ["127.0.0.1", "::1"])
 
-    # export proxy link to prometheus
+    # export service link to prometheus
     conf_dict.setdefault("METRICS_EXPORT_LINKS", False)
 
     # default prefix for metrics
-    conf_dict.setdefault("METRICS_PREFIX", "mtprotoproxy_")
+    conf_dict.setdefault("METRICS_PREFIX", "relay_")
 
     # allow access to config by attributes
     config = type("config", (dict,), conf_dict)(conf_dict)
@@ -302,7 +302,7 @@ def apply_upstream_proxy_settings():
     # apply socks settings in place
     if config.SOCKS5_HOST and config.SOCKS5_PORT:
         import socks
-        print_err("Socket-proxy mode activated, it is incompatible with advertising and uvloop")
+        print_err("Socket mode activated, it is incompatible with advertising and uvloop")
         socks.set_default_proxy(socks.PROXY_TYPE_SOCKS5, config.SOCKS5_HOST, config.SOCKS5_PORT,
                                 username=config.SOCKS5_USER, password=config.SOCKS5_PASS)
         if not hasattr(socket, "origsocket"):
@@ -1267,7 +1267,7 @@ async def handle_handshake(reader, writer):
         ip = peer[0] if peer else "unknown ip"
         peer = await handle_proxy_protocol(reader, peer)
         if not peer:
-            print_err("Client from %s sent bad proxy protocol headers" % ip)
+            print_err("Client from %s sent bad frontend headers" % ip)
             await handle_bad_client(reader, writer, None)
             return False
 
@@ -1383,7 +1383,7 @@ async def do_direct_handshake(proto_tag, dc_idx, dec_key_and_iv=None):
         print_err("Got connection refused while trying to connect to", dc, TG_DATACENTER_PORT)
         return False
     except ConnectionAbortedError as E:
-        print_err("The Telegram server connection is bad: %d (%s %s) %s" % (dc_idx, dc, TG_DATACENTER_PORT, E))
+        print_err("The upstream server connection is bad: %d (%s %s) %s" % (dc_idx, dc, TG_DATACENTER_PORT, E))
         return False
     except (OSError, asyncio.TimeoutError) as E:
         print_err("Unable to connect to", dc, TG_DATACENTER_PORT)
@@ -1578,11 +1578,11 @@ async def do_middleproxy_handshake(proto_tag, dc_idx, cl_ip, cl_port):
                 addr, port, middleproxy_handshake)
             break
         except ConnectionRefusedError as E:
-            print_err("The Telegram server %d (%s %s) is refusing connections, trying next" % (dc_idx, addr, port))
+            print_err("The upstream server %d (%s %s) is refusing connections, trying next" % (dc_idx, addr, port))
         except ConnectionAbortedError as E:
-            print_err("The Telegram server connection is bad: %d (%s %s) %s, trying next" % (dc_idx, addr, port, E))
+            print_err("The upstream server connection is bad: %d (%s %s) %s, trying next" % (dc_idx, addr, port, E))
         except (OSError, asyncio.TimeoutError) as E:
-            print_err("Unable to connect to the Telegram server %d (%s %s), trying next" % (dc_idx, addr, port))
+            print_err("Unable to connect to the upstream server %d (%s %s), trying next" % (dc_idx, addr, port))
     else:
         return False
 
@@ -2086,18 +2086,18 @@ async def update_middle_proxy_info():
         try:
             v4_proxies = await get_new_proxies(PROXY_INFO_ADDR)
             if not v4_proxies:
-                raise Exception("no proxy data")
+                raise Exception("no relay data")
             TG_MIDDLE_PROXIES_V4 = v4_proxies
         except Exception as E:
-            print_err("Error updating middle proxy list:", E)
+            print_err("Error updating middle relay list:", E)
 
         try:
             v6_proxies = await get_new_proxies(PROXY_INFO_ADDR_V6)
             if not v6_proxies:
-                raise Exception("no proxy data (ipv6)")
+                raise Exception("no relay data (ipv6)")
             TG_MIDDLE_PROXIES_V6 = v6_proxies
         except Exception as E:
-            print_err("Error updating middle proxy list for IPv6:", E)
+            print_err("Error updating middle relay list for IPv6:", E)
 
         try:
             headers, secret = await make_https_req(PROXY_SECRET_ADDR)
@@ -2105,9 +2105,9 @@ async def update_middle_proxy_info():
                 raise Exception("no secret")
             if secret != PROXY_SECRET:
                 PROXY_SECRET = secret
-                print_err("Middle proxy secret updated")
+                print_err("Middle relay secret updated")
         except Exception as E:
-            print_err("Error updating middle proxy secret, using old", E)
+            print_err("Error updating middle relay secret, using old", E)
 
         await asyncio.sleep(config.PROXY_INFO_UPDATE_PERIOD)
 
