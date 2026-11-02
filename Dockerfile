@@ -9,6 +9,6 @@ USER relay
 
 WORKDIR /home/relay/
 
-COPY --chown=relay mtprotoproxy.py config.py /home/relay/
+COPY --chown=relay mtprotoxy.py config.py /home/relay/
 
-CMD ["python3", "mtprotoproxy.py"]
+CMD ["python3", "mtprotoxy.py"]
